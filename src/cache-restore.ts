@@ -7,6 +7,7 @@ import fs from 'fs';
 import {State, Outputs} from './constants';
 import {PackageManagerInfo} from './package-managers';
 import {getCacheDirectoryPath, getPackageManagerInfo} from './cache-utils';
+import {computeMetaHash} from './hashdir';
 
 export const restoreCache = async (
   versionSpec: string,
@@ -29,14 +30,28 @@ export const restoreCache = async (
     );
   }
 
+  let prefixKey = core.getInput('cache-key-prefix');
+  if (prefixKey) {
+    prefixKey += '-';
+  }
+
   const linuxVersion =
     process.env.RUNNER_OS === 'Linux' ? `${process.env.ImageOS}-` : '';
-  const primaryKey = `setup-go-${platform}-${linuxVersion}go-${versionSpec}-${fileHash}`;
+  const baseKey = `setup-go-${platform}-${linuxVersion}go-${versionSpec}`;
+  const prefixBaseKey = `${prefixKey}${baseKey}`;
+  core.saveState(State.CachePrefixBaseKey, prefixBaseKey);
+
+  const primaryKey = `${prefixBaseKey}-${fileHash}`;
   core.debug(`primary key is ${primaryKey}`);
 
   core.saveState(State.CachePrimaryKey, primaryKey);
 
-  const cacheKey = await cache.restoreCache(cachePaths, primaryKey);
+  const start = Date.now();
+  const cacheKey = await cache.restoreCache(cachePaths, primaryKey, [
+    prefixBaseKey,
+    baseKey
+  ]);
+  core.info(`Time taken to restore cache: ${Date.now() - start}ms`);
   core.setOutput(Outputs.CacheHit, Boolean(cacheKey));
 
   if (!cacheKey) {
@@ -47,6 +62,12 @@ export const restoreCache = async (
 
   core.saveState(State.CacheMatchedKey, cacheKey);
   core.info(`Cache restored from key: ${cacheKey}`);
+
+  if (cachePaths.length > 1) {
+    const buildHash = computeMetaHash([cachePaths[1]]);
+    core.debug(`build hash is ${buildHash}`);
+    core.saveState(State.CacheBuildHash, buildHash);
+  }
 };
 
 const findDependencyFile = (packageManager: PackageManagerInfo) => {

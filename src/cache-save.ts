@@ -3,6 +3,7 @@ import * as cache from '@actions/cache';
 import fs from 'fs';
 import {State} from './constants';
 import {getCacheDirectoryPath, getPackageManagerInfo} from './cache-utils';
+import {computeMetaHash} from './hashdir';
 
 // Catch and log any unhandled exceptions.  These exceptions can leak out of the uploadChunk method in
 // @actions/toolkit when a failed upload closes the file descriptor causing any in-process reads to
@@ -42,6 +43,7 @@ const cachePackages = async () => {
 
   const state = core.getState(State.CacheMatchedKey);
   const primaryKey = core.getState(State.CachePrimaryKey);
+  const prevBuildHash = core.getState(State.CacheBuildHash);
 
   const packageManagerInfo = await getPackageManagerInfo(packageManager);
 
@@ -71,18 +73,23 @@ const cachePackages = async () => {
     return;
   }
 
-  if (primaryKey === state) {
+  const buildHash = computeMetaHash([cachePaths[1]]);
+
+  if (primaryKey === state && buildHash === prevBuildHash) {
     core.info(
-      `Cache hit occurred on the primary key ${primaryKey}, not saving cache.`
+      `Cache hit occurred on the primary key ${primaryKey} and build hash ${buildHash}, not saving cache.`
     );
     return;
   }
 
-  const cacheId = await cache.saveCache(cachePaths, primaryKey);
+  const updatedKey = primaryKey + (buildHash ? `-${buildHash}` : '');
+  const start = Date.now();
+  const cacheId = await cache.saveCache(cachePaths, updatedKey);
+  core.info(`Time taken to save cache: ${Date.now() - start}ms`);
   if (cacheId === -1) {
     return;
   }
-  core.info(`Cache saved with the key: ${primaryKey}`);
+  core.info(`Cache saved with the key: ${updatedKey}`);
 };
 
 function logWarning(message: string): void {
